@@ -3,33 +3,33 @@ const API_KEY = import.meta.env.VITE_CLOUDINARY_API_KEY as string;
 const API_SECRET = import.meta.env.VITE_CLOUDINARY_API_SECRET as string;
 
 export async function fetchCloudinaryFolder(folderName: string): Promise<string[]> {
-  if (!CLOUD_NAME || !API_KEY || !API_SECRET) {
-    throw new Error('Faltan credenciales de Cloudinary en .env.local');
-  }
-
-  const auth = btoa(`${API_KEY}:${API_SECRET}`);
   const normalizedFolder = folderName.toLowerCase();
-  const response = await fetch(
-    `/cloudinary-api/v1_1/${CLOUD_NAME}/resources/search`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Basic ${auth}`,
-      },
-      body: JSON.stringify({
-        expression: `folder:"${normalizedFolder}"`,
-        max_results: 500,
-      }),
+  let data: { resources?: { public_id: string; secure_url: string }[] };
+
+  if (import.meta.env.DEV) {
+    // Local: Vite proxy evita CORS
+    if (!CLOUD_NAME || !API_KEY || !API_SECRET) {
+      throw new Error('Faltan credenciales en .env.local');
     }
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Error de Cloudinary (${response.status}): ${text}`);
+    const auth = btoa(`${API_KEY}:${API_SECRET}`);
+    const res = await fetch(`/cloudinary-api/v1_1/${CLOUD_NAME}/resources/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+      body: JSON.stringify({ expression: `folder:"${normalizedFolder}"`, max_results: 500 }),
+    });
+    if (!res.ok) throw new Error(`Error de Cloudinary (${res.status})`);
+    data = await res.json();
+  } else {
+    // Producción: Netlify Function (server-side, sin CORS)
+    const res = await fetch(
+      `/.netlify/functions/cloudinary-search?folder=${encodeURIComponent(normalizedFolder)}`
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as { error?: string }).error ?? `Error de Cloudinary (${res.status})`);
+    }
+    data = await res.json();
   }
-
-  const data = await response.json();
 
   if (!data.resources || data.resources.length === 0) {
     throw new Error(`No se encontraron imágenes en la carpeta "${normalizedFolder}"`);
@@ -39,5 +39,5 @@ export async function fetchCloudinaryFolder(folderName: string): Promise<string[
     a.public_id.localeCompare(b.public_id, undefined, { numeric: true, sensitivity: 'base' })
   );
 
-  return sorted.map((r: { secure_url: string }) => r.secure_url);
+  return sorted.map((r) => r.secure_url);
 }
